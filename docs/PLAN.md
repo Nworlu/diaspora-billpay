@@ -17,6 +17,7 @@ Out of scope (pitch as next steps): KYC, multi-currency, notifications, mobile a
 - [x] Rust, Stellar CLI, testnet key `alice`, hello-world deployed (Nov 20)
 - [x] Repo created
 - [x] Escrow contract + 16 unit tests (incl. auth tests), typed events, deadline window 3 to 30 days (Nov 20)
+- [x] Escrow deployed to testnet with test USDC, 3 providers seeded, pay + release smoke test (see DEPLOYMENTS.md)
 - [ ] Confirm buildathon rules on code written before Nov 25
 
 ## Day by day

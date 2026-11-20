@@ -42,13 +42,32 @@ sequenceDiagram
   Note over S,C: If unclaimed after deadline, sender calls refund(payment_id)
 ```
 
-## Contract interface (draft)
+## Contract interface
 
-- `init(admin, token)`
-- `register_provider(provider, name, category)` (admin only)
-- `remove_provider(provider)` (admin only)
-- `pay(sender, provider, amount, invoice_ref, deadline) -> u64` (sender auth; provider must be verified)
-- `release(id)` (provider auth; pays only the registered provider)
-- `refund(id)` (sender auth; only after deadline, only if unreleased)
-- `get_payment(id) -> Payment` and `get_provider(addr) -> Provider`
-- Events: `paid`, `released`, `refunded`
+Admin and token are set by the constructor at deploy time (no separate `init`):
+
+```
+stellar contract deploy --wasm target/wasm32v1-none/release/escrow.wasm \
+  --source alice --network testnet --alias escrow \
+  -- --admin <G...admin> --token <C...usdc_sac>
+```
+
+Admin (admin signs)
+- `register_provider(provider, name, category)`: category is School, Hospital, Landlord or Other
+- `remove_provider(provider)`: errors with `ProviderNotFound` if never registered
+
+Sender / provider
+- `pay(sender, provider, amount, invoice_ref, deadline) -> u64`: sender signs; provider must be verified; deadline must be 3 to 30 days from now
+- `release(id)`: provider signs; only on or before the deadline; pays only the registered provider
+- `refund(id)`: sender signs; only after the deadline and only if still pending
+
+Views
+- `get_payment(id)`, `get_provider(addr)`, `is_verified(addr)`, `payment_count()`, `token_address()`, `admin_address()`
+
+Typed events (`#[contractevent]`): `ProviderAdded`, `ProviderRemoved`, `Paid`, `Released`, `Refunded`.
+
+Storage: payments, providers and instance data have their TTL extended to ~60 days on every write and on pay/release. Deadlines are capped at 30 days so records outlive them.
+
+## Web app notes
+- Provider pending list: loop `get_payment(1..=payment_count())` and filter by provider. RPC only keeps events for a short window, so don't rely on events for history.
+- Receipt page: read `get_payment(id)` plus the transaction link on Stellar Expert.

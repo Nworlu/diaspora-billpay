@@ -4,11 +4,18 @@
 //! A sender abroad pays a stablecoin (USDC) into escrow for a verified provider
 //! (school, hospital, landlord). Funds can only be released to that provider's
 //! wallet. If the provider does not claim before the deadline, the sender can
-//! refund. Every step emits an event that acts as an on-chain receipt.
+//! refund. Every step emits a typed event that acts as an on-chain receipt.
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, token, Address, Env, String,
+    contract, contracterror, contractevent, contractimpl, contracttype, token, Address, Env,
+    String,
 };
+
+const DAY_SECS: u64 = 86_400;
+/// Provider always gets at least this long to claim.
+pub const MIN_WINDOW_SECS: u64 = 3 * DAY_SECS;
+/// Keeps deadlines well inside the storage TTL below.
+pub const MAX_WINDOW_SECS: u64 = 30 * DAY_SECS;
 
 const DAY_IN_LEDGERS: u32 = 17_280;
 const TTL_BUMP: u32 = 60 * DAY_IN_LEDGERS;
@@ -25,6 +32,7 @@ pub enum Error {
     NotPending = 5,
     DeadlineNotReached = 6,
     DeadlinePassed = 7,
+    ProviderNotFound = 8,
 }
 
 #[contracttype]
@@ -65,6 +73,58 @@ pub struct Payment {
     pub status: Status,
 }
 
+// ---------- events (on-chain receipts) ----------
+
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProviderAdded {
+    #[topic]
+    pub provider: Address,
+    pub name: String,
+    pub category: Category,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProviderRemoved {
+    #[topic]
+    pub provider: Address,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Paid {
+    #[topic]
+    pub id: u64,
+    #[topic]
+    pub sender: Address,
+    #[topic]
+    pub provider: Address,
+    pub amount: i128,
+    pub invoice_ref: String,
+    pub deadline: u64,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Released {
+    #[topic]
+    pub id: u64,
+    #[topic]
+    pub provider: Address,
+    pub amount: i128,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Refunded {
+    #[topic]
+    pub id: u64,
+    #[topic]
+    pub sender: Address,
+    pub amount: i128,
+}
+
 #[contracttype]
 enum DataKey {
     Admin,
@@ -79,37 +139,46 @@ pub struct Escrow;
 
 #[contractimpl]
 impl Escrow {
-    /// Set the admin (who verifies providers) and the payment token (USDC SAC).
+    /// Set at deploy time: the admin (who verifies providers) and the payment token (USDC SAC).
     pub fn __constructor(env: Env, admin: Address, token: Address) {
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Token, &token);
         env.storage().instance().set(&DataKey::NextId, &1u64);
+        Self::bump_instance(&env);
     }
 
     // ---------- admin ----------
 
     pub fn register_provider(env: Env, provider: Address, name: String, category: Category) {
         Self::admin(&env).require_auth();
-        let p = Provider { name: name.clone(), category, active: true };
+        let p = Provider { name: name.clone(), category: category.clone(), active: true };
         let key = DataKey::Provider(provider.clone());
         env.storage().persistent().set(&key, &p);
-        env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_BUMP);
-        env.events().publish((symbol_short!("prov_add"), provider), name);
+        Self::bump_persistent(&env, &key);
+        Self::bump_instance(&env);
+        ProviderAdded { provider, name, category }.publish(&env);
     }
 
-    pub fn remove_provider(env: Env, provider: Address) {
+    pub fn remove_provider(env: Env, provider: Address) -> Result<(), Error> {
         Self::admin(&env).require_auth();
         let key = DataKey::Provider(provider.clone());
-        if let Some(mut p) = env.storage().persistent().get::<_, Provider>(&key) {
-            p.active = false;
-            env.storage().persistent().set(&key, &p);
-        }
-        env.events().publish((symbol_short!("prov_rm"), provider), ());
+        let mut p: Provider = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(Error::ProviderNotFound)?;
+        p.active = false;
+        env.storage().persistent().set(&key, &p);
+        Self::bump_persistent(&env, &key);
+        Self::bump_instance(&env);
+        ProviderRemoved { provider }.publish(&env);
+        Ok(())
     }
 
     // ---------- sender / provider ----------
 
     /// Sender deposits `amount` into escrow for a verified provider. Returns the payment id.
+    /// `deadline` must be between 3 and 30 days from now.
     pub fn pay(
         env: Env,
         sender: Address,
@@ -123,7 +192,7 @@ impl Escrow {
             return Err(Error::InvalidAmount);
         }
         let now = env.ledger().timestamp();
-        if deadline <= now {
+        if deadline < now + MIN_WINDOW_SECS || deadline > now + MAX_WINDOW_SECS {
             return Err(Error::InvalidDeadline);
         }
         if !Self::is_verified(env.clone(), provider.clone()) {
@@ -138,7 +207,6 @@ impl Escrow {
 
         let id: u64 = env.storage().instance().get(&DataKey::NextId).unwrap();
         env.storage().instance().set(&DataKey::NextId, &(id + 1));
-        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_BUMP);
 
         let payment = Payment {
             id,
@@ -151,12 +219,13 @@ impl Escrow {
             status: Status::Pending,
         };
         Self::save(&env, &payment);
-        env.events()
-            .publish((symbol_short!("paid"), id, sender, provider), (amount, invoice_ref));
+        Self::bump_persistent(&env, &DataKey::Provider(provider.clone()));
+        Self::bump_instance(&env);
+        Paid { id, sender, provider, amount, invoice_ref, deadline }.publish(&env);
         Ok(id)
     }
 
-    /// Provider claims a pending payment before the deadline. Funds go only to the provider.
+    /// Provider claims a pending payment on or before the deadline. Funds go only to the provider.
     pub fn release(env: Env, id: u64) -> Result<(), Error> {
         let mut p = Self::get_payment(env.clone(), id)?;
         p.provider.require_auth();
@@ -176,8 +245,9 @@ impl Escrow {
         );
         p.status = Status::Released;
         Self::save(&env, &p);
-        env.events()
-            .publish((symbol_short!("released"), id, p.provider.clone()), p.amount);
+        Self::bump_persistent(&env, &DataKey::Provider(p.provider.clone()));
+        Self::bump_instance(&env);
+        Released { id, provider: p.provider, amount: p.amount }.publish(&env);
         Ok(())
     }
 
@@ -198,8 +268,8 @@ impl Escrow {
         );
         p.status = Status::Refunded;
         Self::save(&env, &p);
-        env.events()
-            .publish((symbol_short!("refunded"), id, p.sender.clone()), p.amount);
+        Self::bump_instance(&env);
+        Refunded { id, sender: p.sender, amount: p.amount }.publish(&env);
         Ok(())
     }
 
@@ -229,6 +299,10 @@ impl Escrow {
         Self::token(&env)
     }
 
+    pub fn admin_address(env: Env) -> Address {
+        Self::admin(&env)
+    }
+
     // ---------- internal ----------
 
     fn admin(env: &Env) -> Address {
@@ -242,7 +316,17 @@ impl Escrow {
     fn save(env: &Env, p: &Payment) {
         let key = DataKey::Payment(p.id);
         env.storage().persistent().set(&key, p);
-        env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_BUMP);
+        Self::bump_persistent(env, &key);
+    }
+
+    fn bump_instance(env: &Env) {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_BUMP);
+    }
+
+    fn bump_persistent(env: &Env, key: &DataKey) {
+        if env.storage().persistent().has(key) {
+            env.storage().persistent().extend_ttl(key, TTL_THRESHOLD, TTL_BUMP);
+        }
     }
 }
 

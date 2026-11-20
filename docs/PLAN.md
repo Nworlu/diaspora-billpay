@@ -16,12 +16,14 @@ Out of scope (pitch as next steps): KYC, multi-currency, notifications, mobile a
 ## Status
 - [x] Rust, Stellar CLI, testnet key `alice`, hello-world deployed (Nov 20)
 - [x] Repo created
+- [x] Escrow contract + 16 unit tests (incl. auth tests), typed events, deadline window 3 to 30 days (Nov 20)
+- [ ] Confirm buildathon rules on code written before Nov 25
 
 ## Day by day
 | Day | Tasks | Done when |
 |---|---|---|
 | Nov 21–24 | Next.js + Freighter calling hello-world; read Soroban auth, token interface, events docs | Browser signs and calls a contract |
-| Nov 25 | Escrow contract + unit tests (pay, release, refund, unverified provider). Deploy to testnet. Get test USDC | Tests pass, contract id in README |
+| Nov 25 | Deploy escrow to testnet with test USDC; seed providers; start SEP-24 spike early (riskiest part) | Contract id in README, test anchor auth works |
 | Nov 26 | TS bindings; sender flow (connect, pick provider, pay, show id + tx link) | Real testnet payment from UI |
 | Nov 27 | Provider flow (list + claim); admin register; seed 3 providers | Provider receives USDC |
 | Nov 28 | SEP-10 + SEP-24 withdraw with test anchor (cap: half a day) | Cash-out popup completes or reaches hand-off |

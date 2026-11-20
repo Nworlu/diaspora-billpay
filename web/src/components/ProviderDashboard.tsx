@@ -1,11 +1,15 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useWallet } from "./WalletProvider";
 import { CategoryIcon, Shield, Clock, Check, External } from "./icons";
 import { isVerified, listPayments, release, type Payment } from "@/lib/escrow";
 import { usdcBalance } from "@/lib/balance";
 import { findProvider } from "@/lib/providers";
 import { money, moneyStr, short, fmtDate, fmtShort } from "@/lib/format";
+import { anchorAuth, getAnchorTx, payAnchor, startWithdraw, type AnchorTx } from "@/lib/anchor-core";
+import { signWithFreighter } from "@/lib/wallet";
+import { ANCHOR_MAX, ANCHOR_MIN } from "@/lib/config";
+import { AnchorProgress } from "./AnchorProgress";
 
 export function ProviderDashboard() {
   const { address, connect } = useWallet();
@@ -15,6 +19,55 @@ export function ProviderDashboard() {
   const [cashOut, setCashOut] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [mode, setMode] = useState<"naira" | "hold">("hold");
+  const [managed, setManaged] = useState(false);
+  const [anchor, setAnchor] = useState<(AnchorTx & { paidHash?: string; url?: string }) | null>(null);
+  const [cashErr, setCashErr] = useState<string | null>(null);
+  const [cashBusy, setCashBusy] = useState(false);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
+
+  useEffect(() => {
+    if (!address) return;
+    fetch(`/api/provider/${address}`).then((r) => r.json()).then((r) => { setMode(r.mode); setManaged(r.managed); }).catch(() => {});
+  }, [address]);
+  const changeMode = async (m: "naira" | "hold") => {
+    setMode(m);
+    await fetch(`/api/provider/${address}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: m }) });
+  };
+
+  const freighterSign = (addr: string) => async (xdr: string) => (await signWithFreighter(xdr, { address: addr })).signedTxXdr;
+
+  /** SEP-24 with the connected Freighter wallet: sign in to the anchor, open its window, then send the USDC when it's ready. */
+  const startCashOut = async (amt: string) => {
+    if (!address) return;
+    const n = Number(amt);
+    if (!(n >= ANCHOR_MIN && n <= ANCHOR_MAX)) { setCashErr(`The test anchor takes ${ANCHOR_MIN} to ${ANCHOR_MAX} USDC per cash-out.`); return; }
+    setCashErr(null); setCashBusy(true);
+    const win = window.open("about:blank", "anchor", "width=500,height=760");
+    try {
+      const sign = freighterSign(address);
+      const token = await anchorAuth(address, sign);
+      const w = await startWithdraw(token, address, n.toFixed(2));
+      if (win) win.location.href = w.url;
+      setAnchor({ id: w.id, status: "incomplete", url: w.url });
+      let paid: string | undefined;
+      if (pollRef.current) clearInterval(pollRef.current);
+      pollRef.current = setInterval(async () => {
+        try {
+          const t = await getAnchorTx(token, w.id);
+          if (t.status === "pending_user_transfer_start" && !paid) {
+            paid = "sending";
+            paid = await payAnchor(address, t, sign);
+            usdcBalance(address).then(setBalance);
+          }
+          setAnchor({ ...t, paidHash: paid && paid !== "sending" ? paid : undefined, url: w.url });
+          if (["completed", "error", "refunded", "expired"].includes(t.status)) { clearInterval(pollRef.current!); pollRef.current = null; }
+        } catch (e) { if (paid === "sending") paid = undefined; setCashErr((e as Error).message); }
+      }, 5000);
+    } catch (e) { win?.close(); setCashErr((e as Error).message); }
+    finally { setCashBusy(false); }
+  };
 
   const load = useCallback(async () => {
     if (!address) return;
@@ -43,7 +96,10 @@ export function ProviderDashboard() {
 
   const claim = async (p: Payment) => {
     setBusy(p.id.toString()); setErr(null);
-    try { await release(address, p.id); await load(); }
+    try {
+      await release(address, p.id); await load();
+      if (mode === "naira") { const amt = Math.min(Number(p.amount) / 1e7, ANCHOR_MAX).toFixed(2); setCashOut(amt); startCashOut(amt); }
+    }
     catch (e) { setErr((e as Error).message); }
     finally { setBusy(null); }
   };
@@ -71,6 +127,18 @@ export function ProviderDashboard() {
               <p className="text-sm text-slate-600">In your wallet</p>
               <p className="mt-1 font-display text-4xl font-semibold">{moneyStr(balance)} <span className="text-sm font-normal text-slate-500">USDC</span></p>
               <p className="mt-1 text-sm text-slate-600">Ready to cash out to naira</p>
+            </div>
+          </div>
+
+          <div className="card flex flex-col gap-3 p-5 sm:flex-row sm:items-center">
+            <div className="flex-1">
+              <p className="font-medium">How you get paid</p>
+              <p className="text-sm text-slate-600">{mode === "naira" ? "After you claim, we open the anchor straight away so it lands in your bank as naira." : "Claimed payments stay in your wallet as USDC until you cash out."}{managed ? " We hold this wallet for you." : ""}</p>
+            </div>
+            <div className="flex rounded-xl bg-slate-100 p-1 text-sm">
+              {([["naira", "Naira to bank"], ["hold", "Hold USDC"]] as const).map(([v, l]) => (
+                <button key={v} onClick={() => changeMode(v)} className={`rounded-lg px-3 py-1.5 font-medium ${mode === v ? "bg-white shadow-sm" : "text-slate-600"}`}>{l}</button>
+              ))}
             </div>
           </div>
 
@@ -124,17 +192,26 @@ export function ProviderDashboard() {
               <input value={cashOut} onChange={(e) => setCashOut(e.target.value.replace(/[^\d.]/g, ""))} inputMode="decimal" className="w-full bg-transparent py-3 text-xl outline-none" />
               <span className="text-sm text-slate-400">USDC</span>
             </div>
-            <span className="block text-xs text-slate-400">Available: {moneyStr(balance)} USDC</span>
+            <span className="block text-xs text-slate-400">Available: {moneyStr(balance)} USDC · test anchor limit {ANCHOR_MIN}–{ANCHOR_MAX} USDC</span>
           </label>
           <dl className="mt-5 space-y-2 border-t border-white/10 pt-4 text-sm">
             {[["Anchor", "Stellar test anchor"], ["Rate and fees", "Set by the anchor"], ["Paid to", "Bank account you add next"]].map(([k, v]) => (
               <div key={k} className="flex justify-between gap-2"><dt className="text-slate-400">{k}</dt><dd className="text-right">{v}</dd></div>
             ))}
           </dl>
-          <button disabled title="Coming next: SEP-24 withdraw with the Stellar test anchor"
-            className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-white py-3 font-medium text-ink disabled:opacity-70">
-            Continue with anchor <External className="h-4 w-4" />
-          </button>
+          {cashErr && <p className="mt-4 rounded-lg bg-red-500/15 p-2 text-xs text-red-200">{cashErr}</p>}
+          {anchor ? (
+            <div className="mt-5 space-y-3 rounded-xl bg-white/5 p-4">
+              <AnchorProgress status={anchor.status} amountOut={anchor.amount_out} paidHash={anchor.paidHash} dark />
+              {anchor.status === "incomplete" && anchor.url && <a href={anchor.url} target="anchor" className="inline-flex items-center gap-1 text-xs underline">Reopen the anchor window <External className="h-3.5 w-3.5" /></a>}
+              {["completed", "error", "refunded", "expired"].includes(anchor.status) && <button onClick={() => setAnchor(null)} className="text-xs underline">Start another cash-out</button>}
+            </div>
+          ) : (
+            <button onClick={() => startCashOut(cashOut)} disabled={cashBusy || !Number(cashOut)}
+              className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-white py-3 font-medium text-ink hover:bg-slate-100 disabled:opacity-60">
+              {cashBusy ? "Sign in Freighter…" : <>Continue with anchor <External className="h-4 w-4" /></>}
+            </button>
+          )}
           <p className="mt-3 text-xs text-slate-400">Opens the anchor&apos;s window. You sign in with your wallet, then the anchor handles the bank payout and its own checks.</p>
         </aside>
       </div>

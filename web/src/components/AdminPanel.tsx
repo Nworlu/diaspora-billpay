@@ -16,6 +16,7 @@ export function AdminPanel() {
   const [category, setCategory] = useState<CategoryName>("School");
   const [city, setCity] = useState("Lagos");
   const [wallet, setWallet] = useState("");
+  const [walletKind, setWalletKind] = useState<"own" | "managed">("managed");
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
@@ -37,8 +38,18 @@ export function AdminPanel() {
   };
 
   const add = () => {
-    const p: ProviderInfo = { address: wallet.trim(), name: name.trim(), category, city: city.trim() || "Lagos" };
-    run("add", async () => { await registerProvider(address!, p.address, p.name, p.category); saveProvider(p); setName(""); setWallet(""); }, `${p.name} is verified.`);
+    const base = { name: name.trim(), category, city: city.trim() || "Lagos" };
+    run("add", async () => {
+      let addr = wallet.trim();
+      if (walletKind === "managed") {
+        const r = await fetch("/api/managed-wallet", { method: "POST" }).then((r) => r.json());
+        if (r.error) throw new Error(r.error);
+        addr = r.address;
+      }
+      await registerProvider(address!, addr, base.name, base.category);
+      saveProvider({ ...base, address: addr });
+      setName(""); setWallet("");
+    }, `${base.name} is verified.${walletKind === "managed" ? " Share claim links with them from each payment's receipt." : ""}`);
   };
 
   const verifiedN = rows?.filter((r) => r.verified).length ?? 0;
@@ -67,10 +78,23 @@ export function AdminPanel() {
             <label className="block space-y-1.5"><span className="text-sm font-medium">City</span>
               <input value={city} onChange={(e) => setCity(e.target.value)} className="w-full rounded-xl border border-slate-300 px-3 py-3 outline-none focus:border-brand-600" /></label>
           </div>
-          <label className="block space-y-1.5"><span className="text-sm font-medium">Stellar wallet address</span>
-            <input value={wallet} onChange={(e) => setWallet(e.target.value)} placeholder="G…" className="w-full rounded-xl border border-slate-300 px-3 py-3 font-mono text-sm outline-none focus:border-brand-600" />
-            <span className="block text-xs text-slate-500">Check this with the provider directly. Payments can only ever go to this address.</span></label>
-          <button onClick={add} disabled={!!busy || !name.trim() || !validAddr}
+          <div className="space-y-1.5">
+            <span className="text-sm font-medium">How they get paid</span>
+            <div className="grid gap-2">
+              {([["managed", "Naira to their bank", "We hold a wallet for them. They accept by link, no crypto needed."], ["own", "Their own Stellar wallet", "They claim with Freighter and choose when to cash out."]] as const).map(([v, t, d]) => (
+                <button key={v} type="button" onClick={() => setWalletKind(v)}
+                  className={`rounded-xl border p-3 text-left ${walletKind === v ? "border-brand-600 bg-brand-50/60 ring-1 ring-brand-600" : "border-slate-200"}`}>
+                  <p className="text-sm font-medium">{t}</p><p className="text-xs text-slate-600">{d}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+          {walletKind === "own" && (
+            <label className="block space-y-1.5"><span className="text-sm font-medium">Stellar wallet address</span>
+              <input value={wallet} onChange={(e) => setWallet(e.target.value)} placeholder="G…" className="w-full rounded-xl border border-slate-300 px-3 py-3 font-mono text-sm outline-none focus:border-brand-600" />
+              <span className="block text-xs text-slate-500">Check this with the provider directly. Payments can only ever go to this address.</span></label>
+          )}
+          <button onClick={add} disabled={!!busy || !name.trim() || (walletKind === "own" && !validAddr)}
             className="w-full rounded-xl bg-brand-600 py-3 font-medium text-white hover:bg-brand-700 disabled:opacity-50">
             {busy === "add" ? "Confirm in Freighter…" : address ? "Verify and add" : "Connect Freighter"}
           </button>

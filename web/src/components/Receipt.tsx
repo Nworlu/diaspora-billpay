@@ -18,6 +18,12 @@ export function Receipt() {
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const [refundTx, setRefundTx] = useState<string | null>(null);
+  const [claimUrl, setClaimUrl] = useState<string | null>(null);
+  const [linkCopied, setLinkCopied] = useState(false);
+  const makeLink = async () => {
+    const r = await fetch("/api/claim-link", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id }) }).then((r) => r.json());
+    if (r.url) { setClaimUrl(r.url); navigator.clipboard.writeText(r.url).catch(() => {}); setLinkCopied(true); }
+  };
 
   const load = () => getPayment(BigInt(id)).then(setP).catch((e) => setErr(e.message));
   useEffect(() => { load(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -113,6 +119,24 @@ export function Receipt() {
           ))}
         </div>
       </div>
+      {tag === "Pending" && !expired && (
+        <div className="card space-y-3 p-5">
+          <p className="font-medium">Let the {kind} know</p>
+          <p className="text-sm text-slate-600">Send them a link. They can accept it as naira in their bank account, with no crypto wallet needed, or keep it in USDC.</p>
+          {!claimUrl ? (
+            <button onClick={makeLink} className="rounded-xl bg-ink px-4 py-2.5 text-sm font-medium text-white">Create claim link</button>
+          ) : (
+            <div className="space-y-2">
+              <p className="break-all rounded-lg bg-slate-50 p-2 font-mono text-xs">{claimUrl}</p>
+              <div className="flex flex-wrap gap-2">
+                <button onClick={() => { navigator.clipboard.writeText(claimUrl); setLinkCopied(true); }} className="rounded-xl border border-slate-300 px-3 py-2 text-sm font-medium">{linkCopied ? "Copied" : "Copy link"}</button>
+                <a target="_blank" href={`https://wa.me/?text=${encodeURIComponent(`Hi, I've paid ${money(p.amount)} USDC for ${p.invoice_ref}. Accept it in naira here: ${claimUrl}`)}`} className="rounded-xl bg-[#25D366] px-3 py-2 text-sm font-medium text-white">Share on WhatsApp</a>
+                <a href={`mailto:?subject=${encodeURIComponent(`Payment for ${p.invoice_ref}`)}&body=${encodeURIComponent(`Accept your payment here: ${claimUrl}`)}`} className="rounded-xl border border-slate-300 px-3 py-2 text-sm font-medium">Email</a>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
       <p className="text-sm text-slate-600">This receipt is read straight from the escrow contract, so anyone with the payment ID can check it. Refund unlocks only if the {kind} hasn&apos;t claimed by the deadline.</p>
     </div>
   );

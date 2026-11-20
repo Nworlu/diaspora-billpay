@@ -4,8 +4,6 @@ Pay a school, hospital or landlord in Nigeria from abroad in USDC. Funds sit in 
 
 Built for the Stellar Buildathon (Nigeria chapter), Nov 2026.
 
-- [Build plan](docs/PLAN.md)
-- [Tech stack and architecture](docs/STACK.md)
 
 ## Status
 Work in progress. Web app (Next.js) + Soroban contract on Stellar testnet.

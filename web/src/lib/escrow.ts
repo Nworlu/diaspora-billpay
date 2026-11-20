@@ -67,3 +67,28 @@ export async function refund(sender: string, id: bigint) {
   const sent = await tx.signAndSend();
   return { hash: sent.sendTransactionResponse?.hash };
 }
+
+export async function isVerified(provider: string): Promise<boolean> {
+  const tx = await escrow().is_verified({ provider });
+  return Boolean(tx.result);
+}
+
+export async function adminAddress(): Promise<string> {
+  const tx = await escrow().admin_address();
+  return tx.result as string;
+}
+
+export async function registerProvider(admin: string, provider: string, name: string, category: string) {
+  const tx = await escrow(admin).register_provider({
+    provider,
+    name,
+    category: { tag: category, values: undefined } as never,
+  });
+  return tx.signAndSend();
+}
+
+export async function removeProvider(admin: string, provider: string) {
+  const tx = await escrow(admin).remove_provider({ provider });
+  unwrap(tx.result);
+  return tx.signAndSend();
+}

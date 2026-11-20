@@ -1,1 +1,16 @@
 @import "tailwindcss";
+
+@theme {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-grotesk), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jbmono), ui-monospace, monospace;
+  --color-brand-50: #eaf4ef;
+  --color-brand-100: #d5eadf;
+  --color-brand-600: #0f6b4a;
+  --color-brand-700: #0b5a3e;
+  --color-ink: #111a16;
+  --color-canvas: #f3f3f1;
+}
+
+body { background: var(--color-canvas); }
+.card { @apply rounded-2xl border border-slate-200 bg-white; }

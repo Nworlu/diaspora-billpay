@@ -8,11 +8,15 @@ export const USDC_ASSET = "USDC:GAMVKU4VDDSOAJF55D7IQXPXCMSYZVAG4SB4EPPLXC566VB4
 export const EXPLORER = "https://stellar.expert/explorer/testnet";
 export const DECIMALS = 7;
 
-export type ProviderInfo = { address: string; name: string; category: "School" | "Hospital" | "Landlord" };
+export type CategoryName = "School" | "Hospital" | "Landlord" | "Other";
+export type ProviderInfo = { address: string; name: string; category: CategoryName; city: string };
+export const HORIZON_URL = "https://horizon-testnet.stellar.org";
+export const USDC_CODE = "USDC";
+export const USDC_ISSUER = USDC_ASSET.split(":")[1];
 
 // Verified on-chain by the admin. The contract is the source of truth; this list is for display.
 export const PROVIDERS: ProviderInfo[] = [
-  { address: "GBOQ4IGR7ODUQ5CIAN3PRZ5S6ENRTRR3RDC4B5FOG3U3WJLLC3TZV4M4", name: "Lagos Grammar School", category: "School" },
-  { address: "GCXY5OPKUTJIMMQPCGNP2RNXJ4IE5FRMNLCUNNLIKEQG276BTZYUJGXU", name: "Lagos Island General Hospital", category: "Hospital" },
-  { address: "GBR4SP4Y7EWDJAU3JQHF34RLZUNBEMDYPOQKDV3CTVJU2NNQGPCGGGEX", name: "Adeyemi Properties, Yaba", category: "Landlord" },
+  { address: "GBOQ4IGR7ODUQ5CIAN3PRZ5S6ENRTRR3RDC4B5FOG3U3WJLLC3TZV4M4", name: "Lagos Grammar School", category: "School", city: "Lagos" },
+  { address: "GCXY5OPKUTJIMMQPCGNP2RNXJ4IE5FRMNLCUNNLIKEQG276BTZYUJGXU", name: "Lagos Island General Hospital", category: "Hospital", city: "Lagos" },
+  { address: "GBR4SP4Y7EWDJAU3JQHF34RLZUNBEMDYPOQKDV3CTVJU2NNQGPCGGGEX", name: "Adeyemi Properties, Yaba", category: "Landlord", city: "Lagos" },
 ];
